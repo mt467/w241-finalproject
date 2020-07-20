@@ -1,14 +1,12 @@
 ---
-title: "Problem Set 3"
-author: "Experiments and Causality"
-output:
-  word_document: default
-  pdf_document: default
+title: "W241 Final Project"
+
+output: 
+    github_document: default
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+#Data Analysis Pipeline
 
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
 
 ```{r, results='hide'} 
 # load packages 
@@ -32,79 +30,17 @@ library(lsr)
 library(pwr)
 ```
 
+## Initial Data Load
 
-
+### Load the data
 ```{r}
 d <- fread("/Users/brea/Downloads/ImpactDataViz.pilot_July_16.csv")
-d
+head(d)
 ```
 
-
+### Extract the data from specific date
 ```{r}
-control <- d %>% filter(FL_24_DO=='DataVisualization(Control)')
-treatment <- d %>% filter(FL_24_DO=='DataVisualization(Treatment)')
-```
-
-```{r}
-control_16 <- control  %>% filter(startsWith(StartDate, '7/16/20'))
-treatment_16 <- treatment  %>% filter(startsWith(StartDate, '7/16/20'))
-mean(as.numeric(control_16$Q19))
-sd(as.numeric(control_16$Q19))
-mean(as.numeric(treatment_16$Q19))
-sd(as.numeric(treatment_16$Q19))
-power.t.test(n=15,delta=0.3,sd=0.28,type="two.sample")
-
-cohensD(as.numeric(treatment_16$Q19), as.numeric(control_16$Q19))
-```
-
-
-```{r}
-table_16 <- data.frame(Y = as.numeric(data_16$Q19),
-                        vis = as.numeric(data_16$FL_24_DO),
-                       sick = as.numeric(data_16$Q9),
-                       hospitalized = as.numeric(data_16$Q10),
-                       dead = as.numeric(data_16$Q11),
-                       gender = as.numeric(data_16$Q4),
-                       age = as.numeric(data_16$Q5),
-                       ethinicity = as.numeric(data_16$Q6),
-                       political = as.numeric(data_16$Q7),
-                       education = as.numeric(data_16$Q8))
-table_16 <- na.omit(table_16)
-control_16 <- table_16  %>% filter(vis=='0')
-treatment_16 <- table_16  %>% filter(vis=='1')
-
-control_16
-```
-
-
-
-
-```{r}
-control_14 <- control  %>% filter(startsWith(StartDate, '7/14/20'))
-control_16 <- control  %>% filter(startsWith(StartDate, '7/16/20'))
-treatment_16 <- treatment  %>% filter(startsWith(StartDate, '7/16/20'))
-treatment_14 <- treatment  %>% filter(startsWith(StartDate, '7/14/20'))
-treatment_16 <- treatment  %>% filter(startsWith(StartDate, '7/16/20'))
-```
-
-
-
-
-
-```{r}
-cat("           control      treatment \n")
-cat("gender        ",IQR(control_16$gender), "        ", IQR(treatment_16$gender), "\n")
-cat("age           ",IQR(control_16$age), "       ", IQR(treatment_16$age), "\n")
-cat("ethinicity    ",IQR(control_16$ethinicity), "          ", IQR(treatment_16$ethinicity), "\n")
-cat("political     ",IQR(control_16$political), "       ", IQR(treatment_16$political), "\n")
-cat("education     ",IQR(control_16$education), "       ", IQR(treatment_16$education), "\n")
-cat("sick          ",IQR(control_16$sick), "       ", IQR(treatment_16$sick), "\n")
-cat("hospitalized  ",IQR(control_16$hospitalized), "          ", IQR(treatment_16$hospitalized), "\n")
-cat("dead          ",IQR(control_16$dead), "          ", IQR(treatment_16$dead), "\n")
-```
-
-
-```{r}
+d <- na.omit(d)
 data_16 <- d  %>% filter(startsWith(StartDate, '7/16/20'))
 data_16$FL_24_DO[data_16$FL_24_DO=='DataVisualization(Treatment)'] <- 1
 data_16$FL_24_DO[data_16$FL_24_DO=='DataVisualization(Control)'] <- 0
@@ -114,106 +50,175 @@ data_16$Q10[data_16$Q10=='1'] <- 1
 data_16$Q10[data_16$Q10=='2'] <- 0
 data_16$Q11[data_16$Q11=='1'] <- 1
 data_16$Q11[data_16$Q11=='2'] <- 0
+data_16$Q18 <- as.numeric(data_16$Q18)
+data_16$Q19 <- as.numeric(data_16$Q19)
+```
 
+
+## Random Inference
+
+### Calculate ATE
+```{r}
+estimate_ate <- function(dt, outcome, treatment) { 
+  ## This takes a data.table, the name of the outcome variable, and the name
+  ## of the treatment indicator. 
+  dt <- na.omit(dt)
+  g <- dt[ , .(group_mean = mean(get(outcome))), keyby = .(get(treatment))]
+  diff <- g[, diff(group_mean)]
+  return(diff)
+}
+ate_18 <- estimate_ate(data_16, outcome = 'Q18', treatment = 'FL_24_DO')
+ate_19 <- estimate_ate(data_16, outcome = 'Q19', treatment = 'FL_24_DO')
+ate_18
+```
+
+### Random Inference
+
+```{r}
+set.seed(2)
+assignment <- function(d) { 
+  length <- dim(d)[1]
+  sample(c(rep(0,length/2),rep(1,length/2)))
+} 
+
+make_data <- function(d) {
+  dt <- (cbind(d, treatment_v2 = assignment(d)))
+  return(dt)
+}
+
+ates <- function(simulations = 10000,d, oc) {
+  res <- NA   
+  for(sim in 1:simulations) { 
+    dt <- make_data(d)
+    res[sim] <- estimate_ate(dt, outcome = oc, treatment = 'treatment_v2')
+  }
+  return(res)
+}
+ate_result <- ates(1000, data_16, 'Q18')
 ```
 
 ```{r}
-chart.Correlation(table_16, histogram=TRUE)
+#res <- NA
+#for (i in 1:10) {
+#    res[i] <- data_16[ , .(group_mean = mean(Q18)), keyby = .(sample('FL_24_DO'))][ , diff('FL_24_DO')]
+#}
+#dist_sharp_null <- res
+#hist(dist_sharp_null)
+#abline(v=ate, lwd=3, col='blue')
 ```
 
 ```{r}
-table_16_more_vars <- data.frame(Y = as.numeric(data_16$Q19),
-                        vis = as.numeric(data_16$FL_24_DO),
-                       sick = as.numeric(data_16$Q9),
-                       hospitalized = as.numeric(data_16$Q10),
-                       dead = as.numeric(data_16$Q11),
-                       male = as.numeric(data_16$Q4),
-                       age = as.numeric(data_16$Q5),
-                       ethinicity = as.numeric(data_16$Q6),
-                       political = as.numeric(data_16$Q7),
-                       education = as.numeric(data_16$Q8))
-table_16_more_vars$asian[table_16_more_vars$ethinicity=='1'] <- 1
-table_16_more_vars$asian[table_16_more_vars$ethinicity!='1'] <- 0
-table_16_more_vars$africaamerica[table_16_more_vars$ethinicity=='2'] <- 1
-table_16_more_vars$africaamerica[table_16_more_vars$ethinicity!='2'] <- 0
-table_16_more_vars$caucasian[table_16_more_vars$ethinicity=='3'] <- 1
-table_16_more_vars$caucasian[table_16_more_vars$ethinicity!='3'] <- 0
-table_16_more_vars$latino[table_16_more_vars$ethinicity=='4'] <- 1
-table_16_more_vars$latino[table_16_more_vars$ethinicity!='4'] <- 0
-table_16_more_vars$india[table_16_more_vars$ethinicity=='5'] <- 1
-table_16_more_vars$india[table_16_more_vars$ethinicity!='5'] <- 0
-
-table_16_more_vars$repulican[table_16_more_vars$political=='1'] <- 1
-table_16_more_vars$repulican[table_16_more_vars$political!='1'] <- 0
-table_16_more_vars$democrat[table_16_more_vars$political=='2'] <- 1
-table_16_more_vars$democrat[table_16_more_vars$political!='2'] <- 0
-table_16_more_vars$indepedent[table_16_more_vars$political=='3'] <- 1
-table_16_more_vars$indepedent[table_16_more_vars$political!='3'] <- 0
-table_16_more_vars$sthelse[table_16_more_vars$political=='4'] <- 1
-table_16_more_vars$sthelse[table_16_more_vars$political!='4'] <- 0
-table_16_more_vars <- na.omit(table_16_more_vars)
-table_16_more_vars
+num_larger <- sum(ate_result >= ate_18)
+p_value_one_tailed <- num_larger/length(ate_result)
+p_value_one_tailed
 ```
 
 ```{r}
-baseline <- rep.int(mean(table_16_more_vars$Y), 29)
-table_16_more_vars$baseline <- baseline
-m1 <- lm(Y ~ vis + sick + hospitalized  + vis*sick + vis*hospitalized, data = table_16_more_vars)
-m2 <- lm(Y ~ vis + sick + hospitalized  + vis*sick + vis*hospitalized + repulican + democrat  + repulican*vis + democrat*vis , data = table_16_more_vars)
-m3 <- lm(Y ~ vis + sick + hospitalized + repulican + democrat + repulican*vis + democrat*vis  + vis*sick + vis*hospitalized + + male + male*vis , data = table_16_more_vars)
-stargazer(
-    m1,m2,m3, 
-    type = 'text',
-    header=F
-  )
-
+p_value_two_tailed <- sum(abs(ate_result) >= abs(ate_18))/1000
+p_value_two_tailed
 ```
 
+### Random Inference with Package
 ```{r}
-m1 <- lm(Y ~ vis + sick + hospitalized + vis*sick + vis*hospitalized, data = table_16)
-confint(m1, 'vis', level=0.95)
-summary(m1)
-
-```
-
-```{r}
-table_19 <- data.frame(Y = as.numeric(data_16$Q19),
+table_18 <- data.frame(Y = as.numeric(data_16$Q18),
                         Z = as.numeric(data_16$FL_24_DO))
-table_19$Z[table_19$Z=='DataVisualization(Treatment)'] <- 1
-table_19$Z[table_19$Z=='DataVisualization(Control)'] <- 0
-table_19 <- na.omit(table_19)
+table_18$Z[table_18$Z=='DataVisualization(Treatment)'] <- 1
+table_18$Z[table_18$Z=='DataVisualization(Control)'] <- 0
+table_18 <- na.omit(table_18)
 #random inference
 declartion <- declare_ra(N=30, m=15)
 ri2_out <- conduct_ri(
   formula= Y ~ Z,
   declaration = declartion,
   sharp_hypothesis = 0,
-  data = table_19
+  data = table_18
 )
 summary(ri2_out)
 ```
 
+## Data Analysis
+
+### Seperate data for control and treatment
 ```{r}
-control_14_duration <- as.numeric(control_14$`Duration (in seconds)`)
+control <- d %>% filter(FL_24_DO=='DataVisualization(Control)')
+treatment <- d %>% filter(FL_24_DO=='DataVisualization(Treatment)')
+control_16 <- control  %>% filter(startsWith(StartDate, '7/16/20'))
+treatment_16 <- treatment  %>% filter(startsWith(StartDate, '7/16/20'))
+mean(as.numeric(control_16$Q19))
+sd(as.numeric(control_16$Q19))
+mean(as.numeric(treatment_16$Q19))
+sd(as.numeric(treatment_16$Q19))
+#power.t.test(n=15,delta=0.3,sd=0.28,type="two.sample")
+#cohensD(as.numeric(treatment_16$Q19), as.numeric(control_16$Q19))
+```
+
+### Extract veriable from raw data into a new dataframe 
+```{r}
+Q19_table_16_more_vars <- data.frame(Y = as.numeric(data_16$Q19),
+                                    vis = as.numeric(data_16$FL_24_DO),
+                                   sick = as.numeric(data_16$Q9),
+                                   hospitalized = as.numeric(data_16$Q10),
+                                   dead = as.numeric(data_16$Q11),
+                                   male = as.numeric(data_16$Q4),
+                                   age = as.numeric(data_16$Q5),
+                                   ethinicity = as.numeric(data_16$Q6),
+                                   political = as.numeric(data_16$Q7),
+                                   education = as.numeric(data_16$Q8))
+
+Q18_table_16_more_vars <- data.frame(Y = as.numeric(data_16$Q18),
+                                    vis = as.numeric(data_16$FL_24_DO),
+                                   sick = as.numeric(data_16$Q9),
+                                   hospitalized = as.numeric(data_16$Q10),
+                                   dead = as.numeric(data_16$Q11),
+                                   male = as.numeric(data_16$Q4),
+                                   age = as.numeric(data_16$Q5),
+                                   ethinicity = as.numeric(data_16$Q6),
+                                   political = as.numeric(data_16$Q7),
+                                   education = as.numeric(data_16$Q8))
+```
+
+
+### Check Variable Correlation and Covariate Balance
+```{r}
+chart.Correlation(Q19_table_16_more_vars, histogram=TRUE)
+```
+
+```{r}
+chart.Correlation(Q18_table_16_more_vars, histogram=TRUE)
+```
+
+#### Check Time
+```{r}
 control_16_duration <- as.numeric(control_16$`Duration (in seconds)`)
 
-treatment_14_duration <- as.numeric(treatment_14$`Duration (in seconds)`)
 treatment_16_duration <- as.numeric(treatment_16$`Duration (in seconds)`)
 
-par(mfrow=c(2,2))
-hist(control_14_duration, col=rgb(1,0,0,0.5))
+par(mfrow=c(1,2))
 hist(control_16_duration, col=rgb(0,0,1,0.5))
-hist(treatment_14_duration, col=rgb(1,0,0,0.5))
 hist(treatment_16_duration, col=rgb(0,0,1,0.5))
-mean(control_14_duration)
 mean(control_16_duration)
-mean(treatment_14_duration)
 mean(treatment_16_duration)
 ```
 
 
+#### Check Variable Interval
 ```{r}
+control <- Q18_table_16_more_vars %>% filter(vis==0)
+treatment <- Q18_table_16_more_vars %>% filter(vis==1)
+cat("           control      treatment \n")
+cat("gender        ",IQR(control$gender), "        ", IQR(treatment$gender), "\n")
+cat("age           ",IQR(control$age), "       ", IQR(treatment$age), "\n")
+#cat("ethinicity    ",IQR(control$ethinicity), "          ", IQR(treatment$ethinicity), "\n")
+cat("political     ",IQR(control$political), "       ", IQR(treatment$political), "\n")
+cat("education     ",IQR(control$education), "       ", IQR(treatment$education), "\n")
+cat("sick          ",IQR(control$sick), "       ", IQR(treatment$sick), "\n")
+cat("hospitalized  ",IQR(control$hospitalized), "          ", IQR(treatment$hospitalized), "\n")
+cat("dead          ",IQR(control$dead), "          ", IQR(treatment$dead), "\n")
+```
 
+
+#### Visualization
+```{r}
 concern_control <- as.numeric(control_16$Q18)
 concern_treatment <- as.numeric(treatment_16$Q18)
 mean(concern_control)
@@ -254,8 +259,8 @@ mtext("I trust that the information presented in the data visualization is accur
 
 
 ```{r}
-q11_control <- as.numeric(control$Q11)
-q11_treatment <- as.numeric(treatment$Q11)
+q11_control <- as.numeric(control_16$Q11)
+q11_treatment <- as.numeric(treatment_16$Q11)
 mean(q11_treatment) - mean(q11_control)
 par(mfrow=c(1,2))
 
@@ -267,8 +272,8 @@ mtext("Has anyone you know died from COVID-19?	", side=1, outer=TRUE, line=-1)
 
 ```{r}
 
-q10_control <- as.numeric(control$Q10)
-q10_treatment <- as.numeric(treatment$Q10)
+q10_control <- as.numeric(control_16$Q10)
+q10_treatment <- as.numeric(treatment_16$Q10)
 mean(q10_treatment) - mean(q10_control)
 par(mfrow=c(1,2))
 
@@ -281,8 +286,8 @@ mtext("Has anyone you know died from COVID-19?	", side=1, outer=TRUE, line=-1)
 
 ```{r}
 
-q9_control <- as.numeric(control$Q9)
-q9_treatment <- as.numeric(treatment$Q9)
+q9_control <- as.numeric(control_16$Q9)
+q9_treatment <- as.numeric(treatment_16$Q9)
 mean(q9_treatment) - mean(q9_control)
 par(mfrow=c(1,2))
 
@@ -290,12 +295,74 @@ par(mfrow=c(1,2))
 hist(q9_control, col=rgb(1,0,0,0.5), xlim=c(0,3), ylim=c(0,30))
 hist(q9_treatment, col=rgb(0,0,1,0.5), xlim=c(0,3), ylim=c(0,30))
 mtext("Has anyone you know died from COVID-19?	", side=1, outer=TRUE, line=-1)
-
 ```
 
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
 
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+### Encode data to dummy indicator
+```{r}
+Q19_table_16_more_vars$asian[Q19_table_16_more_vars$ethinicity=='1'] <- 1
+Q19_table_16_more_vars$asian[Q19_table_16_more_vars$ethinicity!='1'] <- 0
+Q19_table_16_more_vars$africaamerica[Q19_table_16_more_vars$ethinicity=='2'] <- 1
+Q19_table_16_more_vars$africaamerica[Q19_table_16_more_vars$ethinicity!='2'] <- 0
+Q19_table_16_more_vars$caucasian[Q19_table_16_more_vars$ethinicity=='3'] <- 1
+Q19_table_16_more_vars$caucasian[Q19_table_16_more_vars$ethinicity!='3'] <- 0
+Q19_table_16_more_vars$latino[Q19_table_16_more_vars$ethinicity=='4'] <- 1
+Q19_table_16_more_vars$latino[Q19_table_16_more_vars$ethinicity!='4'] <- 0
+Q19_table_16_more_vars$india[Q19_table_16_more_vars$ethinicity=='5'] <- 1
+Q19_table_16_more_vars$india[Q19_table_16_more_vars$ethinicity!='5'] <- 0
 
-The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+Q19_table_16_more_vars$repulican[Q19_table_16_more_vars$political=='1'] <- 1
+Q19_table_16_more_vars$repulican[Q19_table_16_more_vars$political!='1'] <- 0
+Q19_table_16_more_vars$democrat[Q19_table_16_more_vars$political=='2'] <- 1
+Q19_table_16_more_vars$democrat[Q19_table_16_more_vars$political!='2'] <- 0
+Q19_table_16_more_vars$indepedent[Q19_table_16_more_vars$political=='3'] <- 1
+Q19_table_16_more_vars$indepedent[Q19_table_16_more_vars$political!='3'] <- 0
+Q19_table_16_more_vars$sthelse[Q19_table_16_more_vars$political=='4'] <- 1
+Q19_table_16_more_vars$sthelse[Q19_table_16_more_vars$political!='4'] <- 0
+Q19_table_16_more_vars <- na.omit(Q19_table_16_more_vars)
+```
 
+```{r}
+Q18_table_16_more_vars$asian[Q18_table_16_more_vars$ethinicity=='1'] <- 1
+Q18_table_16_more_vars$asian[Q18_table_16_more_vars$ethinicity!='1'] <- 0
+Q18_table_16_more_vars$africaamerica[Q18_table_16_more_vars$ethinicity=='2'] <- 1
+Q18_table_16_more_vars$africaamerica[Q18_table_16_more_vars$ethinicity!='2'] <- 0
+Q18_table_16_more_vars$caucasian[Q18_table_16_more_vars$ethinicity=='3'] <- 1
+Q18_table_16_more_vars$caucasian[Q18_table_16_more_vars$ethinicity!='3'] <- 0
+Q18_table_16_more_vars$latino[Q18_table_16_more_vars$ethinicity=='4'] <- 1
+Q18_table_16_more_vars$latino[Q18_table_16_more_vars$ethinicity!='4'] <- 0
+Q18_table_16_more_vars$india[Q18_table_16_more_vars$ethinicity=='5'] <- 1
+Q18_table_16_more_vars$india[Q18_table_16_more_vars$ethinicity!='5'] <- 0
+
+Q18_table_16_more_vars$repulican[Q18_table_16_more_vars$political=='1'] <- 1
+Q18_table_16_more_vars$repulican[Q18_table_16_more_vars$political!='1'] <- 0
+Q18_table_16_more_vars$democrat[Q18_table_16_more_vars$political=='2'] <- 1
+Q18_table_16_more_vars$democrat[Q18_table_16_more_vars$political!='2'] <- 0
+Q18_table_16_more_vars$indepedent[Q18_table_16_more_vars$political=='3'] <- 1
+Q18_table_16_more_vars$indepedent[Q18_table_16_more_vars$political!='3'] <- 0
+Q18_table_16_more_vars$sthelse[Q18_table_16_more_vars$political=='4'] <- 1
+Q18_table_16_more_vars$sthelse[Q18_table_16_more_vars$political!='4'] <- 0
+Q18_table_16_more_vars <- na.omit(Q18_table_16_more_vars)
+```
+
+### Model
+```{r}
+m1 <- lm(Y ~ vis + sick + hospitalized  + vis*sick + vis*hospitalized, data = table_16_more_vars)
+m2 <- lm(Y ~ vis + sick + hospitalized  + vis*sick + vis*hospitalized + repulican + democrat  + repulican*vis + democrat*vis , data = table_16_more_vars)
+m3 <- lm(Y ~ vis + sick + hospitalized + repulican + democrat + repulican*vis + democrat*vis  + vis*sick + vis*hospitalized + + male + male*vis , data = table_16_more_vars)
+confint(m1, 'vis', level=0.95)
+stargazer(
+    m1,m2,m3, 
+    type = 'text',
+    header=F
+  )
+```
+
+
+```{r}
+#robust_se_2 <- sqrt(diag(vcovHC(mod_2)))
+```
+
+```{r}
+#stargazer(mod_2, se = list(robust_se_2) , type = 'text')
+```
