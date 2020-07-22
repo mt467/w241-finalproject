@@ -1,0 +1,287 @@
+---
+title: "ImpactDataViz 241 Final Project"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+```{r}
+# load packages 
+library(data.table)
+library(foreign)
+library(sandwich)
+library(stargazer)
+library(lmtest)
+```
+
+
+## 1. Parse the survey data into a data.table
+```{r}
+d <- fread("data/final.csv")
+#d <- fread("data/pilot.csv")
+
+# covariates
+setnames(d, 'Q3', 'state')
+setnames(d, 'Q4', 'gender')
+setnames(d, 'Q5', 'age')
+setnames(d, 'Q6', 'ethnicity_multi')
+setnames(d, 'Q7', 'political_party')
+setnames(d, 'Q8', 'education')
+setnames(d, 'Q9', 'covid_sick')
+setnames(d, 'Q10', 'covid_hospitalized')
+setnames(d, 'Q11', 'covid_died')
+
+# duration of survey time
+setnames(d, 'Duration (in seconds)', 'duration_of_survey')
+
+# which block was active? (did the user see the treatment or 
+# control data viz) 
+setnames(d, 'Q15', 'treatment_viz_is_accurate')
+setnames(d, 'Q17', 'control_viz_is_accurate')
+
+# outcome questions about COVID attitudes
+setnames(d, 'Q18', 'outcome_spread')
+setnames(d, 'Q19', 'outcome_death')
+
+# which block was active determines if
+# subject received treatment data viz or control
+# data viz
+d[, treatment := ifelse(is.na(treatment_viz_is_accurate), 0, 1)]
+d = d[!is.na(outcome_spread) & !is.na(outcome_death),]
+
+# ethnicity allows for multiple choice
+# for covariates, just grab the first one
+ethnicity_single = rep(0,nrow(d))
+i = 1
+for (eth_entry in d[,ethnicity_multi]) {
+  eth_tokens = unlist(strsplit(eth_entry, ","))
+  ethnicity_single[i] = as.numeric(eth_tokens[1])
+  i = i + 1
+}
+d[, ethnicity := ethnicity_single ]
+
+# counts in control vs treatment
+n_control = nrow(d[treatment == 0, ])
+n_treatment = nrow(d[treatment == 1, ])
+
+
+
+```
+
+
+```{r}
+# Multiple plot function
+#
+# ggplot objects can be passed in ..., or to plotlist (as a list of ggplot objects)
+# - cols:   Number of columns in layout
+# - layout: A matrix specifying the layout. If present, 'cols' is ignored.
+#
+# If the layout is something like matrix(c(1,2,3,3), nrow=2, byrow=TRUE),
+# then plot 1 will go in the upper left, 2 will go in the upper right, and
+# 3 will go all the way across the bottom.
+#
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+```
+
+## 2. EDA
+
+
+### 2.1 Are the data visualizations in control and treatment considered accurate by subjects?
+
+```{r}
+par(mfrow=c(1,2))
+hist(d[, treatment_viz_is_accurate], col=rgb(1,0,0,0.5), xlim=c(1,2))
+hist(d[, control_viz_is_accurate],   col=rgb(0,0,1,0.5), xlim=c(1,2))
+mtext("I trust that the information presented in the data visualization is accurate", side=1, outer=TRUE, line=-1)
+```
+
+
+### 2.2 Check Time
+```{r}
+
+par(mfrow=c(1,2))
+hist(d[treatment == 0,duration_of_survey], col=rgb(0,0,1,0.5))
+hist(d[treatment == 0,duration_of_survey], col=rgb(0,0,1,0.5))
+mean(d[treatment == 0,duration_of_survey])
+mean(d[treatment == 0,duration_of_survey])
+```
+
+
+
+## 3. Covariate balance 
+
+### 3.1 Compare distributions using violin plote
+```{r , fig.width = 8, fig.height = 12}
+library('ggplot2')
+
+options(repr.plot.width = 14, repr.plot.height = 8)
+
+p1 = ggplot(d, aes(x=as.factor(treatment), y=gender, fill=as.factor(treatment))) +
+  geom_violin()
+
+p2 = ggplot(d, aes(x=as.factor(treatment), y=age, fill=as.factor(treatment))) +
+  geom_violin()
+
+p3 = ggplot(d, aes(x=as.factor(treatment), y=as.numeric(ethnicity),  fill=as.factor(treatment))) +
+  geom_violin()
+
+p4 = ggplot(d, aes(x=as.factor(treatment), y=political_party,  fill=as.factor(treatment))) +
+  geom_violin()
+
+p5 = ggplot(d, aes(x=as.factor(treatment), y=education,  fill=as.factor(treatment))) +
+  geom_violin()
+
+p6 = ggplot(d, aes(x=as.factor(treatment), y=covid_sick,  fill=as.factor(treatment))) +
+  geom_violin()
+
+p7 = ggplot(d, aes(x=as.factor(treatment), y=covid_hospitalized,  fill=as.factor(treatment))) +
+  geom_violin()
+
+p8 = ggplot(d, aes(x=as.factor(treatment), y=covid_died, fill=as.factor(treatment))) +
+  geom_violin()
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, p8, cols=2)
+```
+
+
+## 4. Estimate ATE
+```{r}
+estimate_ate <- function(dt, outcome, treatment, treat_val) { 
+  ## This takes a data.table, the name of the outcome variable, and the name
+  ## of the treatment indicator. 
+  
+  g <- dt[ , .(group_mean = mean(get(outcome))), keyby = .(get(treatment))]
+  ate <- g[ , diff(group_mean)]
+  
+  return(ate) 
+}
+ri <-function(num=10000){
+  
+  res <- NA
+  for (i in 1:num) {
+    res[i] <- d[ , .(group_mean = mean(views)), keyby = .(sample(success))][ , diff(group_mean)]
+  }
+  
+  return (res)
+}
+
+
+```
+
+
+### 4.1 Estimate the ATE for the outcome on how concerned subject is about COVID-19 continued spread
+```{r}
+g <- d[ , .(group_mean = mean(outcome_spread)), keyby = .(treatment)]
+g
+ate_spread <- g[ , diff(group_mean)]
+ate_spread
+```
+```{r}
+res <- NA
+for (i in 1:10000) {
+    res[i] <- d[ , .(group_mean = mean(outcome_spread)), keyby = .(sample(treatment))][ , diff(group_mean)]
+}
+dist_sharp_null <- res
+hist(dist_sharp_null)
+abline(v=ate_spread, lwd=3, col='blue')
+abline(v=abs(ate_spread), lwd=3, col='blue')
+p_value_one_tailed <- mean(dist_sharp_null >= ate_spread)
+p_value_one_tailed
+p_value_two_tailed <- mean(abs(dist_sharp_null) >= abs(ate_spread))
+p_value_two_tailed
+
+```
+
+
+### 4.2 Estimate the ATE for the outcome on emotional reaction to COVID-19 deaths in US
+```{r}
+g <- d[ , .(group_mean = mean(outcome_death)), keyby = .(treatment)]
+g
+ate_death <- g[ , diff(group_mean)]
+ate_death 
+
+```
+
+
+```{r}
+res <- NA
+for (i in 1:10000) {
+    res[i] <- d[ , .(group_mean = mean(outcome_death)), keyby = .(sample(treatment))][ , diff(group_mean)]
+}
+dist_sharp_null <- res
+hist(dist_sharp_null)
+abline(v=ate_death, lwd=3, col='blue')
+abline(v=ate_death*-1, lwd=3, col='blue')
+p_value_one_tailed <- mean(dist_sharp_null >= ate_death)
+p_value_one_tailed
+p_value_two_tailed <- mean(abs(dist_sharp_null) >= abs(ate_death))
+p_value_two_tailed
+```
+
+## 5. Linear Regression
+
+### 5.1 Perform linear regression on concern over COVID-19 spread outcome
+```{r}
+model_spread = lm(outcome_spread ~ treatment, d)
+model_spread1 = lm(outcome_spread ~ treatment 
+                   + as.factor(gender) 
+                   + as.factor(age) 
+                   + as.factor(ethnicity) 
+                   + as.factor(political_party) 
+                   + as.factor(education) 
+                   + as.factor(covid_sick) 
+                   + as.factor(covid_hospitalized) 
+                   + as.factor(covid_died), d)
+stargazer(model_spread, model_spread1, type="text")
+```
+
+### 5.2 Perform linear regression on reaction to COVID-19 deaths outcome
+```{r}
+model_death = lm(outcome_death ~ treatment, d)
+model_death1 = lm(outcome_death ~ treatment 
+                  + as.factor(gender)
+                  + as.factor(age) 
+                  + as.factor(ethnicity) 
+                  + as.factor(political_party) 
+                  + as.factor(education) 
+                  + as.factor(covid_sick) 
+                  + as.factor(covid_hospitalized) 
+                  + as.factor(covid_died), 
+                  d)
+
+stargazer(model_death, model_death1, type="text")
+```
