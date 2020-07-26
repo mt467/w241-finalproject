@@ -2,7 +2,12 @@
 title: "ImpactDataViz 241 Final Project"
 output:
   pdf_document: default
-  html_notebook: default
+  github_document: default
+  knit: (function(inputFile, encoding) {
+    rmarkdown::render(
+      inputFile, encoding = encoding,
+      output_format = c('github_document', 'pdf_document')) 
+      })
 ---
 
 ```{r}
@@ -12,64 +17,57 @@ library(foreign)
 library(sandwich)
 library(stargazer)
 library(lmtest)
+library(tidyr)
+library(knitr)
+library('ggplot2')
+library(fastDummies)
 ```
 
 
-## 1. Parse the survey data into a data.table
+## Common functions
 ```{r}
-d <- fread("data/final.csv")
-#d <- fread("data/pilot.csv")
-
-# covariates
-setnames(d, 'Q3', 'state')
-setnames(d, 'Q4', 'gender')
-setnames(d, 'Q5', 'age')
-setnames(d, 'Q6', 'ethnicity_multi')
-setnames(d, 'Q7', 'political_party')
-setnames(d, 'Q8', 'education')
-setnames(d, 'Q9', 'covid_sick')
-setnames(d, 'Q10', 'covid_hospitalized')
-setnames(d, 'Q11', 'covid_died')
-
-# duration of survey time
-setnames(d, 'Duration (in seconds)', 'duration_of_survey')
-
-# which block was active? (did the user see the treatment or 
-# control data viz) 
-setnames(d, 'Q15', 'treatment_viz_is_accurate')
-setnames(d, 'Q17', 'control_viz_is_accurate')
-
-# outcome questions about COVID attitudes
-setnames(d, 'Q18', 'outcome_spread')
-setnames(d, 'Q19', 'outcome_death')
-
-# which block was active determines if
-# subject received treatment data viz or control
-# data viz
-d[, treatment := ifelse(is.na(treatment_viz_is_accurate), 0, 1)]
-d = d[!is.na(outcome_spread) & !is.na(outcome_death),]
-
-# ethnicity allows for multiple choice
-# for covariates, just grab the first one
-ethnicity_single = rep(0,nrow(d))
-i = 1
-for (eth_entry in d[,ethnicity_multi]) {
-  eth_tokens = unlist(strsplit(eth_entry, ","))
-  ethnicity_single[i] = as.numeric(eth_tokens[1])
-  i = i + 1
+# function to return confidence intervals with bust se
+get_confint_robust = function(model, vcovCL) {
+  t<-qt(.975, model$df.residual)
+  ct<-coeftest(model, vcovCL)
+  est<-cbind(ct[,1], ct[,1]-t*ct[,2], ct[,1]+t*ct[,2], ct[,4])
+  colnames(est)<-c("Estimate","LowerCI","UpperCI","pValue")
+  return(est)
 }
-d[, ethnicity := ethnicity_single ]
 
-# counts in control vs treatment
-n_control = nrow(d[treatment == 0, ])
-n_treatment = nrow(d[treatment == 1, ])
+# parse out the regression results using robust standard errors
+get_regression_results_robust_se = function(model, df, variable_names, showAsTibble) {
+  model$vcovHC = vcovHC(model,type="HC1")
+  
+  robust_se_all    <- sqrt(diag(model$vcovHC))
+  
+  est = get_confint_robust(model,model$vcovHC)
 
-
-
-```
-
-
-```{r}
+  robust_se = c(rep(0, length(variable_names)))
+  i = 1
+  for (variable_name in variable_names) {
+    robust_se_single <- sqrt(diag( model$vcovHC))[variable_name] 
+    robust_se[i] = robust_se_single
+    i = i + 1
+  }
+  
+  coef = est[variable_names, 'Estimate']
+  ci_lower_robust = est[variable_names, 'LowerCI']
+  ci_lower_robust = est[variable_names, 'LowerCI']
+  ci_upper_robust = est[variable_names, 'UpperCI']
+  p_value = est[variable_names, 'pValue']
+  results = data.table(id = variable_names)
+  results[, coef := round(coef,4)]
+  results[, ci_lower := round(ci_lower_robust,4)]
+  results[, ci_upper := round(ci_upper_robust,4)]
+  results[, p_value := signif(p_value, 5)]
+  results[, robust_se := round(robust_se,4)]
+  
+  if (showAsTibble) {
+    print(as_tibble(results))
+  }
+  return( list('estimates'=results, 'robust_se_all'=robust_se_all))
+}
 # Multiple plot function
 #
 # ggplot objects can be passed in ..., or to plotlist (as a list of ggplot objects)
@@ -117,27 +115,109 @@ multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
 }
 ```
 
-## 2. EDA
 
-
-### 2.1 Are the data visualizations in control and treatment considered accurate by subjects?
+## 1. Parse the survey data into a data.table
 
 ```{r}
-par(mfrow=c(1,2))
-hist(d[, treatment_viz_is_accurate], col=rgb(1,0,0,0.5), xlim=c(1,2))
-hist(d[, control_viz_is_accurate],   col=rgb(0,0,1,0.5), xlim=c(1,2))
-mtext("I trust that the information presented in the data visualization is accurate", side=1, outer=TRUE, line=-1)
+
+parse_survey_data = function(filename, treatment_only=FALSE) {
+  cat(filename, "\n")
+  raw <- fread(filename)
+
+  # covariates
+  setnames(raw, 'Q3', 'state')
+  setnames(raw, 'Q4', 'gender')
+  setnames(raw, 'Q5', 'age')
+  setnames(raw, 'Q6', 'ethnicity_multi')
+  setnames(raw, 'Q7', 'political_party')
+  setnames(raw, 'Q8', 'education')
+  setnames(raw, 'Q9', 'covid_sick')
+  setnames(raw, 'Q10', 'covid_hospitalized')
+  setnames(raw, 'Q11', 'covid_died')
+  
+  # duration of survey time
+  setnames(raw, 'Duration (in seconds)', 'duration_of_survey')
+  
+  # which block was active? (did the user see the treatment or 
+  # control data viz) 
+  setnames(raw, 'Q15', 'treatment_viz_is_accurate')
+  if (!treatment_only) {
+    setnames(raw, 'Q17', 'control_viz_is_accurate')
+  }
+  
+  # outcome questions about COVID attitudes
+  setnames(raw, 'Q18', 'outcome_spread')
+  setnames(raw, 'Q19', 'outcome_death')
+  
+  # which block was active determines if
+  # subject received treatment data viz or control
+  # data viz
+  cat(" number of responses", nrow(raw), '\n')
+  raw[, treatment := ifelse(is.na(treatment_viz_is_accurate), 0, 1)]
+  cleaned = raw[!is.na(outcome_spread) & !is.na(outcome_death),]
+  cat(" number of responses after dropping na", nrow(cleaned), '\n')
+  
+  # ethnicity allows for multiple choice
+  # for covariates, just grab the first one
+  ethnicity_single = rep(0,nrow(cleaned))
+  i = 1
+  for (eth_entry in cleaned[,ethnicity_multi]) {
+    eth_tokens = unlist(strsplit(eth_entry, ","))
+    ethnicity_single[i] = as.numeric(eth_tokens[1])
+    i = i + 1
+  }
+  cleaned[, ethnicity := ethnicity_single ]
+  
+  # counts in control vs treatment
+  n_control = nrow(cleaned[treatment == 0, ])
+  n_treatment = nrow(cleaned[treatment == 1, ])
+  
+  cat(" number in treatment", n_treatment, "\n")
+  cat(" number in control", n_control, "\n\n")
+  
+  return(cleaned)
+}
 ```
 
 
-### 2.2 Check Time
 ```{r}
+# A large run of 260 subjects run on 7/21
+run1 <- parse_survey_data("data/run1.2020.07.21.csv")
+run1 = run1[, run := 0]
+run1_control = run1[treatment == 0, ]
+run1_treatment = run1[treatment == 1, ]
+run1[, condition := treatment]
 
-par(mfrow=c(1,2))
-hist(d[treatment == 0,duration_of_survey], col=rgb(0,0,1,0.5))
-hist(d[treatment == 0,duration_of_survey], col=rgb(0,0,1,0.5))
-mean(d[treatment == 0,duration_of_survey])
-mean(d[treatment == 0,duration_of_survey])
+
+# One small run was done in evening 7/24 treatment only
+run2_small <- parse_survey_data("data/run2.small.2020.07.24.csv", TRUE)
+run2_small[, run := 2]
+run2_small[, control_viz_is_accurate := ""]
+
+# A large run of 270 run on 7/25 treatment and control
+run2_large <- parse_survey_data("data/run2.2020.07.25.csv")
+run2_large = run2_large[, run :=2]
+run2 = rbind(run2_small, run2_large)
+run2[, condition := treatment]
+
+
+# Combine the runs on 7/21 and 7/25
+combined = rbind(run1, run2)
+```
+
+
+## 2. EDA
+
+
+### 2.1 Check Duration of Survey
+```{r}
+show_duration = function(d) {
+  cat('duration for control  ', mean(d[condition == 0,duration_of_survey]), '\n')
+  cat('duration for treatment', mean(d[condition == 1,duration_of_survey]), '\n\n')
+}
+show_duration(run1)
+show_duration(run2)
+show_duration(combined)
 ```
 
 
@@ -146,142 +226,183 @@ mean(d[treatment == 0,duration_of_survey])
 
 ### 3.1 Compare distributions using violin plote
 ```{r , fig.width = 8, fig.height = 12}
-library('ggplot2')
-
-options(repr.plot.width = 14, repr.plot.height = 8)
-
-p1 = ggplot(d, aes(x=as.factor(treatment), y=gender, fill=as.factor(treatment))) +
-  geom_violin()
-
-p2 = ggplot(d, aes(x=as.factor(treatment), y=age, fill=as.factor(treatment))) +
-  geom_violin()
-
-p3 = ggplot(d, aes(x=as.factor(treatment), y=as.numeric(ethnicity),  fill=as.factor(treatment))) +
-  geom_violin()
-
-p4 = ggplot(d, aes(x=as.factor(treatment), y=political_party,  fill=as.factor(treatment))) +
-  geom_violin()
-
-p5 = ggplot(d, aes(x=as.factor(treatment), y=education,  fill=as.factor(treatment))) +
-  geom_violin()
-
-p6 = ggplot(d, aes(x=as.factor(treatment), y=covid_sick,  fill=as.factor(treatment))) +
-  geom_violin()
-
-p7 = ggplot(d, aes(x=as.factor(treatment), y=covid_hospitalized,  fill=as.factor(treatment))) +
-  geom_violin()
-
-p8 = ggplot(d, aes(x=as.factor(treatment), y=covid_died, fill=as.factor(treatment))) +
-  geom_violin()
-
-multiplot(p1, p2, p3, p4, p5, p6, p7, p8, cols=2)
+check_covariate_balance = function(d) {
+  options(repr.plot.width = 14, repr.plot.height = 8)
+  
+  p1 = ggplot(d, aes(x=as.factor(condition), y=gender, fill=as.factor(condition))) +
+    geom_violin()
+  
+  p2 = ggplot(d, aes(x=as.factor(condition), y=age, fill=as.factor(condition))) +
+    geom_violin()
+  
+  p3 = ggplot(d, aes(x=as.factor(condition), y=as.numeric(ethnicity),  fill=as.factor(condition))) +
+    geom_violin()
+  
+  p4 = ggplot(d, aes(x=as.factor(condition), y=political_party,  fill=as.factor(condition))) +
+    geom_violin()
+  
+  p5 = ggplot(d, aes(x=as.factor(condition), y=education,  fill=as.factor(condition))) +
+    geom_violin()
+  
+  p6 = ggplot(d, aes(x=as.factor(condition), y=covid_sick,  fill=as.factor(condition))) +
+    geom_violin()
+  
+  p7 = ggplot(d, aes(x=as.factor(condition), y=covid_hospitalized,  fill=as.factor(condition))) +
+    geom_violin()
+  
+  p8 = ggplot(d, aes(x=as.factor(condition), y=covid_died, fill=as.factor(condition))) +
+    geom_violin()
+  
+  multiplot(p1, p2, p3, p4, p5, p6, p7, p8, cols=2)
+}
+check_covariate_balance(run1)
+check_covariate_balance(run2)
+check_covariate_balance(combined)
 ```
 
 
 ## 4. Estimate ATE
+
+
+### 4.1 Estimate the ATE for both outcomes
 ```{r}
-estimate_ate <- function(dt, outcome, treatment, treat_val) { 
-  ## This takes a data.table, the name of the outcome variable, and the name
-  ## of the treatment indicator. 
+estimate_ate = function(d, outcome_field) {
+  g <- d[ , .(group_mean = mean(get(outcome_field))), keyby = .(condition)]
+
   
-  g <- dt[ , .(group_mean = mean(get(outcome))), keyby = .(get(treatment))]
   ate <- g[ , diff(group_mean)]
-  
-  return(ate) 
-}
-ri <-function(num=10000){
-  
+
   res <- NA
-  for (i in 1:num) {
-    res[i] <- d[ , .(group_mean = mean(views)), keyby = .(sample(success))][ , diff(group_mean)]
+  for (i in 1:10000) {
+      res[i] <- d[ , .(group_mean = mean(get(outcome_field))), keyby = .(sample(condition))][ , diff(group_mean)]
   }
+  dist_sharp_null <- res
+  #hist(dist_sharp_null)
+  #abline(v=ate, lwd=3, col='blue')
+  #abline(v=abs(ate), lwd=3, col='blue')
+  p_value_one_tailed <- mean(dist_sharp_null >= ate)
+  p_value_two_tailed <- mean(abs(dist_sharp_null) >= abs(ate))
+
   
-  return (res)
+  cat(outcome_field, '\n')
+  cat(' mean control    ', g[condition == '0', group_mean], '\n')
+  cat(' mean treatement ', g[condition == '1', group_mean], '\n')
+  cat(' ATE             ', ate, '\n')
+  cat(' p_value 1-tailed', p_value_one_tailed, '\n')
+  cat(' p_value 2-tailed', p_value_two_tailed, '\n\n')
 }
 
+cat('run1', '\n')
+cat('********************', '\n')
+estimate_ate(run1, 'outcome_spread')
+estimate_ate(run1, 'outcome_death')
+
+
+cat('run2', '\n')
+cat('********************', '\n')
+estimate_ate(run2, 'outcome_spread')
+estimate_ate(run2, 'outcome_death')
+
+
+cat('combined', '\n')
+cat('********************', '\n')
+estimate_ate(combined, 'outcome_spread')
+estimate_ate(combined, 'outcome_death')
 
 ```
 
-
-### 4.1 Estimate the ATE for the outcome on how concerned subject is about COVID-19 continued spread
-```{r}
-g <- d[ , .(group_mean = mean(outcome_spread)), keyby = .(treatment)]
-g
-ate_spread <- g[ , diff(group_mean)]
-ate_spread
-```
-```{r}
-res <- NA
-for (i in 1:10000) {
-    res[i] <- d[ , .(group_mean = mean(outcome_spread)), keyby = .(sample(treatment))][ , diff(group_mean)]
-}
-dist_sharp_null <- res
-hist(dist_sharp_null)
-abline(v=ate_spread, lwd=3, col='blue')
-abline(v=abs(ate_spread), lwd=3, col='blue')
-p_value_one_tailed <- mean(dist_sharp_null >= ate_spread)
-p_value_one_tailed
-p_value_two_tailed <- mean(abs(dist_sharp_null) >= abs(ate_spread))
-p_value_two_tailed
-
-```
-
-
-### 4.2 Estimate the ATE for the outcome on emotional reaction to COVID-19 deaths in US
-```{r}
-g <- d[ , .(group_mean = mean(outcome_death)), keyby = .(treatment)]
-g
-ate_death <- g[ , diff(group_mean)]
-ate_death 
-
-```
-
-
-```{r}
-res <- NA
-for (i in 1:10000) {
-    res[i] <- d[ , .(group_mean = mean(outcome_death)), keyby = .(sample(treatment))][ , diff(group_mean)]
-}
-dist_sharp_null <- res
-hist(dist_sharp_null)
-abline(v=ate_death, lwd=3, col='blue')
-abline(v=ate_death*-1, lwd=3, col='blue')
-p_value_one_tailed <- mean(dist_sharp_null >= ate_death)
-p_value_one_tailed
-p_value_two_tailed <- mean(abs(dist_sharp_null) >= abs(ate_death))
-p_value_two_tailed
-```
 
 ## 5. Linear Regression
 
-### 5.1 Perform linear regression on concern over COVID-19 spread outcome
+
+### 5.1 Perform linear regression the two outcomens (concern about COVID-19 spread, concern about COVID-19 deaths)
 ```{r}
-model_spread = lm(outcome_spread ~ treatment, d)
-model_spread1 = lm(outcome_spread ~ treatment 
-                   + as.factor(gender) 
-                   + as.factor(age) 
-                   + as.factor(ethnicity) 
-                   + as.factor(political_party) 
-                   + as.factor(education) 
-                   + as.factor(covid_sick) 
-                   + as.factor(covid_hospitalized) 
-                   + as.factor(covid_died), d)
-stargazer(model_spread, model_spread1, type="text")
+
+regression_labels = c('Treatment', 
+      'Female', 'Non-binary', 'Gender not answered',
+      '20-29', '30-39', '40-49', '50-59', '60-69', '70-79',
+      'Black/African American', 'Caucasian', 'Hispanic/Latinx', 
+        'American Indian or Alaskan Native', 'Pacific Islander', 'Ethnicity not answered',
+      'Democrat', 'Independent', 'Political-party-other',
+      'High school', 'Some college', 'Associates', 'Bachelors', 'Masters', 'Doctoral', 'Professional (JD/MD)',
+      'Know someone sick from COVID-19', 
+      'Know someone hospitalized from COVID-19', 
+      'Know someone who died COVID-19')
+
+run_regression_outcome1 = function(d) {
+  model_spread = lm(outcome_spread ~ condition, d) 
+  model_spread_adv = lm(outcome_spread ~ condition 
+                     + as.factor(gender) 
+                     + as.factor(age) 
+                     + as.factor(ethnicity) 
+                     + as.factor(political_party) 
+                     + as.factor(education) 
+                     + as.factor(covid_sick) 
+                     + as.factor(covid_hospitalized) 
+                     + as.factor(covid_died), d)
+  est_spread     = get_regression_results_robust_se(model_spread,  d, c('condition'), FALSE)
+  est_spread_adv = get_regression_results_robust_se(model_spread_adv, d, c('condition'), FALSE)
+  return ( list('model'= model_spread, 
+                'model_adv'=model_spread_adv, 
+                'est'=est_spread, 
+                'est_adv'=est_spread_adv))
+}
+mi1 = run_regression_outcome1(run1)
+mi2 = run_regression_outcome1(run2)
+mi3 = run_regression_outcome1(combined)
+
+stargazer(mi1$model, mi1$model_adv, 
+          mi2$model, mi2$model_adv, 
+          mi3$model, mi3$model_adv, 
+          type="text",  report="vcsp*",
+          se = list(mi1$est$robust_se_all, mi1$est_adv$robust_se_all,
+                    mi2$est$robust_se_all, mi2$est_adv$robust_se_all,
+                    mi3$est$robust_se_all, mi3$est_adv$robust_se_all),
+          title=paste('Response to COVID-19 Spread'), 
+          dep.var.caption  = "Response to COVID-19 Spread",
+          dep.var.labels.include = FALSE, model.numbers=FALSE,
+          column.labels = c("July 21, 2020", "July 21, 2020", "July 25, 2020", "July 25, 2020", "Both dates", "Both dates"),
+          align=TRUE,
+          covariate.labels = regression_labels)
+  
+
+run_regression_outcome2 = function(d) {
+  model_spread = lm(outcome_spread ~ condition, d) 
+  model_spread_adv = lm(outcome_death ~ condition 
+                     + as.factor(gender) 
+                     + as.factor(age) 
+                     + as.factor(ethnicity) 
+                     + as.factor(political_party) 
+                     + as.factor(education) 
+                     + as.factor(covid_sick) 
+                     + as.factor(covid_hospitalized) 
+                     + as.factor(covid_died), d)
+  est_spread     = get_regression_results_robust_se(model_spread,  d, c('condition'), FALSE)
+  est_spread_adv = get_regression_results_robust_se(model_spread_adv, d, c('condition'), FALSE)
+  return ( list('model'= model_spread, 
+                'model_adv'=model_spread_adv, 
+                'est'=est_spread, 
+                'est_adv'=est_spread_adv))
+}
+
+mi1d = run_regression_outcome2(run1)
+mi2d = run_regression_outcome2(run2)
+mi3d = run_regression_outcome2(combined)
+
+stargazer(mi1d$model, mi1d$model_adv, 
+          mi2d$model, mi2d$model_adv, 
+          mi3d$model, mi3d$model_adv, 
+          type="text",  report="vcsp*",
+          se = list(mi1d$est$robust_se_all, mi1d$est_adv$robust_se_all,
+                    mi2d$est$robust_se_all, mi2d$est_adv$robust_se_all,
+                    mi3d$est$robust_se_all, mi3d$est_adv$robust_se_all),
+          title=paste('Response to COVID-19 Deaths'), 
+          dep.var.caption  = "Response to COVID-19 Deaths",
+          dep.var.labels.include = FALSE, model.numbers=FALSE,
+          column.labels = c("July 21, 2020", "July 21, 2020", "July 25, 2020", "July 25, 2020", "Both dates", "Both dates"),
+          align=TRUE,
+          covariate.labels = regression_labels)
+
 ```
 
-### 5.2 Perform linear regression on reaction to COVID-19 deaths outcome
-```{r}
-model_death = lm(outcome_death ~ treatment, d)
-model_death1 = lm(outcome_death ~ treatment 
-                  + as.factor(gender)
-                  + as.factor(age) 
-                  + as.factor(ethnicity) 
-                  + as.factor(political_party) 
-                  + as.factor(education) 
-                  + as.factor(covid_sick) 
-                  + as.factor(covid_hospitalized) 
-                  + as.factor(covid_died), 
-                  d)
 
-stargazer(model_death, model_death1, type="text")
-```
