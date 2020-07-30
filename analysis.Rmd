@@ -184,21 +184,20 @@ parse_survey_data = function(filename, treatment_only=FALSE) {
 # A large run of 260 subjects run on 7/21
 run1 <- parse_survey_data("data/run1.2020.07.21.csv")
 run1 = run1[, run := 0]
-run1_control = run1[treatment == 0, ]
-run1_treatment = run1[treatment == 1, ]
 run1[, condition := treatment]
 
 
 # One small run was done in evening 7/24 treatment only
 run2_small <- parse_survey_data("data/run2.small.2020.07.24.csv", TRUE)
-run2_small[, run := 2]
+run2_small[, run := 1]
+run2_small[, condition := treatment]
 run2_small[, control_viz_is_accurate := ""]
 
 # A large run of 270 run on 7/25 treatment and control
 run2_large <- parse_survey_data("data/run2.2020.07.25.csv")
-run2_large = run2_large[, run :=2]
+run2_large = run2_large[, run :=1]
+run2_large[, condition := treatment]
 run2 = rbind(run2_small, run2_large)
-run2[, condition := treatment]
 
 
 # Combine the runs on 7/21 and 7/25
@@ -318,28 +317,33 @@ estimate_ate(combined, 'outcome_death')
 ### 5.1 Perform linear regression the two outcomens (concern about COVID-19 spread, concern about COVID-19 deaths)
 ```{r}
 
-regression_labels = c('Treatment', 
-      'Female', 'Non-binary', 'Gender not answered',
-      '20-29', '30-39', '40-49', '50-59', '60-69', '70-79',
-      'Black/African American', 'Caucasian', 'Hispanic/Latinx', 
-        'American Indian or Alaskan Native', 'Pacific Islander', 'Ethnicity not answered',
-      'Democrat', 'Independent', 'Political-party-other',
-      'High school', 'Some college', 'Associates', 'Bachelors', 'Masters', 'Doctoral', 'Professional (JD/MD)',
-      'Know someone sick from COVID-19', 
-      'Know someone hospitalized from COVID-19', 
-      'Know someone who died COVID-19')
 
-run_regression_outcome1 = function(d) {
+run_regression_outcome1 = function(d, control_for_run=FALSE) {
   model_spread = lm(outcome_spread ~ condition, d) 
-  model_spread_adv = lm(outcome_spread ~ condition 
-                     + as.factor(gender) 
-                     + as.factor(age) 
-                     + as.factor(ethnicity) 
-                     + as.factor(political_party) 
-                     + as.factor(education) 
-                     + as.factor(covid_sick) 
-                     + as.factor(covid_hospitalized) 
-                     + as.factor(covid_died), d)
+  if (control_for_run) {
+    model_spread_adv = lm(outcome_spread ~ condition 
+                       + run
+                       + as.factor(gender) 
+                       + as.factor(age) 
+                       + as.factor(ethnicity) 
+                       + as.factor(political_party) 
+                       + as.factor(education) 
+                       + as.factor(covid_sick) 
+                       + as.factor(covid_hospitalized) 
+                       + as.factor(covid_died), d)
+    
+  } else {
+    model_spread_adv = lm(outcome_spread ~ condition 
+                       + as.factor(gender) 
+                       + as.factor(age) 
+                       + as.factor(ethnicity) 
+                       + as.factor(political_party) 
+                       + as.factor(education) 
+                       + as.factor(covid_sick) 
+                       + as.factor(covid_hospitalized) 
+                       + as.factor(covid_died), d)
+    
+  }
   est_spread     = get_regression_results_robust_se(model_spread,  d, c('condition'), FALSE)
   est_spread_adv = get_regression_results_robust_se(model_spread_adv, d, c('condition'), FALSE)
   return ( list('model'= model_spread, 
@@ -347,36 +351,35 @@ run_regression_outcome1 = function(d) {
                 'est'=est_spread, 
                 'est_adv'=est_spread_adv))
 }
-mi1 = run_regression_outcome1(run1)
-mi2 = run_regression_outcome1(run2)
-mi3 = run_regression_outcome1(combined)
 
-stargazer(mi1$model, mi1$model_adv, 
-          mi2$model, mi2$model_adv, 
-          mi3$model, mi3$model_adv, 
-          type="text",  report="vcsp*",
-          se = list(mi1$est$robust_se_all, mi1$est_adv$robust_se_all,
-                    mi2$est$robust_se_all, mi2$est_adv$robust_se_all,
-                    mi3$est$robust_se_all, mi3$est_adv$robust_se_all),
-          title=paste('Response to COVID-19 Spread'), 
-          dep.var.caption  = "Response to COVID-19 Spread",
-          dep.var.labels.include = FALSE, model.numbers=FALSE,
-          column.labels = c("July 21, 2020", "July 21, 2020", "July 25, 2020", "July 25, 2020", "Both dates", "Both dates"),
-          align=TRUE,
-          covariate.labels = regression_labels)
   
 
-run_regression_outcome2 = function(d) {
+run_regression_outcome2 = function(d, control_for_run) {
   model_spread = lm(outcome_spread ~ condition, d) 
-  model_spread_adv = lm(outcome_death ~ condition 
-                     + as.factor(gender) 
-                     + as.factor(age) 
-                     + as.factor(ethnicity) 
-                     + as.factor(political_party) 
-                     + as.factor(education) 
-                     + as.factor(covid_sick) 
-                     + as.factor(covid_hospitalized) 
-                     + as.factor(covid_died), d)
+  if (control_for_run) {
+    model_spread_adv = lm(outcome_death ~ condition 
+                       + run
+                       + as.factor(gender) 
+                       + as.factor(age) 
+                       + as.factor(ethnicity) 
+                       + as.factor(political_party) 
+                       + as.factor(education) 
+                       + as.factor(covid_sick) 
+                       + as.factor(covid_hospitalized) 
+                       + as.factor(covid_died), d)
+    
+  } else {
+    model_spread_adv = lm(outcome_death ~ condition 
+                       + as.factor(gender) 
+                       + as.factor(age) 
+                       + as.factor(ethnicity) 
+                       + as.factor(political_party) 
+                       + as.factor(education) 
+                       + as.factor(covid_sick) 
+                       + as.factor(covid_hospitalized) 
+                       + as.factor(covid_died), d)
+    
+  }
   est_spread     = get_regression_results_robust_se(model_spread,  d, c('condition'), FALSE)
   est_spread_adv = get_regression_results_robust_se(model_spread_adv, d, c('condition'), FALSE)
   return ( list('model'= model_spread, 
@@ -385,24 +388,68 @@ run_regression_outcome2 = function(d) {
                 'est_adv'=est_spread_adv))
 }
 
-mi1d = run_regression_outcome2(run1)
-mi2d = run_regression_outcome2(run2)
-mi3d = run_regression_outcome2(combined)
 
-stargazer(mi1d$model, mi1d$model_adv, 
-          mi2d$model, mi2d$model_adv, 
-          mi3d$model, mi3d$model_adv, 
-          type="text",  report="vcsp*",
-          se = list(mi1d$est$robust_se_all, mi1d$est_adv$robust_se_all,
-                    mi2d$est$robust_se_all, mi2d$est_adv$robust_se_all,
-                    mi3d$est$robust_se_all, mi3d$est_adv$robust_se_all),
-          title=paste('Response to COVID-19 Deaths'), 
-          dep.var.caption  = "Response to COVID-19 Deaths",
-          dep.var.labels.include = FALSE, model.numbers=FALSE,
-          column.labels = c("July 21, 2020", "July 21, 2020", "July 25, 2020", "July 25, 2020", "Both dates", "Both dates"),
-          align=TRUE,
-          covariate.labels = regression_labels)
 
 ```
 
+```{r}
+
+regression_labels_run = c('Treatment', 
+      'Run',
+      'Female', 'Non-binary', 'Gender not answered',
+      '20-29', '30-39', '40-49', '50-59', '60-69', '70-79',
+      'Black/African American', 'Caucasian', 'Hispanic/Latinx', 
+        'Native American', 'Pacific Islander', 'Ethnicity not answered',
+      'Democrat', 'Independent', 'Party other',
+      'High school', 'Some college', 'Associates', 'Bachelors', 'Masters', 'Doctoral', 'JD/MD',
+      'Sick from COVID-19', 
+      'Hospitalized from COVID-19', 
+      'Died COVID-19')
+
+
+
+mi_spread_run1 = run_regression_outcome1(run1, TRUE)
+mi_spread_run2 = run_regression_outcome1(run2, TRUE)
+mi_spread_combined_run = run_regression_outcome1(combined, TRUE)
+
+
+stargazer(mi_spread_run1$model, mi_spread_run1$model_adv, 
+          mi_spread_run2$model_adv, 
+          mi_spread_combined_run$model_adv,
+          type="text",  report="vcsp*",
+          se = list(mi_spread_run1$est$robust_se_all, mi_spread_run1$est_adv$robust_se_all,
+                    mi_spread_run2$est_adv$robust_se_all,
+                    mi_spread_combined_run$est_adv$robust_se_all),
+          title=paste('Response to COVID-19 Spread'), 
+          dep.var.caption  = "Response to COVID-19 Spread",
+          dep.var.labels.include = FALSE, model.numbers=FALSE,
+          column.labels = c("July 21, 2020", "July 21, 2020", "July 25, 2020", "Both dates"),
+          align=TRUE,
+          covariate.labels = regression_labels_run)
+
+
+
+
+mi_death_run1 = run_regression_outcome2(run1, TRUE)
+mi_death_run2 = run_regression_outcome2(run2, TRUE)
+mi_death_combined_run = run_regression_outcome2(combined, TRUE)
+
+
+stargazer(mi_death_run1$model, mi_death_run1$model_adv, 
+          mi_death_run2$model_adv, 
+          mi_death_combined_run$model_adv,
+          type="text",  report="vcsp*",
+          se = list(mi_death_run1$est$robust_se_all, mi_death_run1$est_adv$robust_se_all,
+                    mi_death_run2$est_adv$robust_se_all,
+                    mi_death_combined_run$est_adv$robust_se_all),
+          title=paste('Response to COVID-19 Death'), 
+          dep.var.caption  = "Response to COVID-19 Death",
+          dep.var.labels.include = FALSE, model.numbers=FALSE,
+          column.labels = c("July 21, 2020", "July 21, 2020", "July 25, 2020", "Both dates"),
+          align=TRUE,
+          covariate.labels = regression_labels_run)
+
+
+
+```
 
