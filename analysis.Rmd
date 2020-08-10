@@ -113,6 +113,7 @@ multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
     }
   }
 }
+
 ```
 
 
@@ -177,6 +178,7 @@ parse_survey_data = function(filename, treatment_only=FALSE) {
   
   return(cleaned)
 }
+
 ```
 
 
@@ -517,6 +519,56 @@ stargazer(mi_death_run1$model, mi_death_run1$model_adv,
 ```
 
 ```{r}
+
+
+state_ordinals <- fread('data/state_ordinals.csv')
+states_northeast = c('Connecticut','Maine','Massachusetts','New Hampshire','Rhode Island','Vermont','New Jersey','New York','Pennsylvania')
+states_midwest  = c('Illinois','Indiana','Michigan','Ohio','Wisconsin', 'Iowa', 'Kansas', 'Minnesota', 'Missouri', 'Nebraska', 'North Dakota', 'South Dakota')
+states_south = c('Delaware', 'Florida', 'Georgia', 'Maryland', 'North Carolina', 'South Carolina', 'Virginia', 'District of Columbia', 'West Virginia', 'Alabama', 'Kentucky', 'Mississippi', 'Tennessee', 'Arkansas', 'Louisiana', 'Oklahoma', 'Texas')
+states_west = c('Arizona', 'Colorado', 'Idaho', 'Montana', 'Nevada', 'New Mexico', 'Utah', 'Wyoming', 'Alaska', 'California', 'Hawaii', 'Oregon', 'Washington')
+states_other = c('Puerto Rico')
+
+
+get_region_for_state = function(ordinal) {
+  state_name = state_ordinals[ordinal, V1]
+  if (is.element(state_name, states_northeast)) {
+    return("northeast")
+  } else  if (is.element(state_name, states_midwest)) {
+     return("midwest")
+  } else  if (is.element(state_name, states_south)) {
+    return("south")
+  } else  if (is.element(state_name, states_west)) {
+    return("west")
+  } else  if (is.element(state_name, states_other)) {
+    return ("other")
+  } else {
+    return("other")
+  }
+}
+get_region_for_state(5)
+
+regions = c(rep('',53))
+i = 1
+for (ordinal in state_ordinals$V2) {
+  the_region = get_region_for_state(ordinal)
+  cat(the_region, i, '\n')
+  regions[i] = the_region
+  i = i + 1
+}
+
+state_ordinals[, region:= regions]
+
+state_ordinals
+  
+  
+  
+
+
+```
+
+```{r}
+
+
 aggregate_covariates = function(df) {
   df[, gender_male := ifelse(gender == 1, 1, 0)]
   df[, gender_female := ifelse(gender == 2, 1, 0)]
@@ -529,12 +581,23 @@ aggregate_covariates = function(df) {
   df[, party_republican := ifelse(political_party == 1, 1, 0)]
   df[, party_democrat := ifelse(political_party == 2, 1, 0)]
   df[, party_other := ifelse(political_party == 3 | political_party == 4, 1, 0)]
+  df[, party_non_republican := ifelse( political_party == 1, 0, 1)]
   df[, treatment_assignment := condition]
+  df[, state_name :=  state_ordinals[state, V1]]
+  df[, region:= state_ordinals[state, region]]
+  df[, region_northeast := ifelse(region == 'northeast', 1,0)]
+  df[, region_midwest   := ifelse(region == 'midwest', 1,0)]
+  df[, region_south     := ifelse(region == 'south', 1,0)]
+  df[, region_west      := ifelse(region == 'west', 1,0)]
+  df[, region_other     := ifelse(region == 'other', 1,0)]
+  
 }
 
 aggregate_covariates(run1)
 aggregate_covariates(run2)
 aggregate_covariates(combined)
+
+head(combined[, c('state', 'state_name', 'region', 'region_northeast', 'region_midwest')])
 
 ```
 
@@ -557,6 +620,9 @@ run_regression_outcome1_simplified = function(d, control_for_run=FALSE) {
                        + party_other
                        + not_caucasian
                        + college_educated
+                       + region_south
+                       + region_midwest
+                       + region_west
                        + covid_sick 
                        + covid_hospitalized 
                        + covid_died, d)
@@ -572,6 +638,9 @@ run_regression_outcome1_simplified = function(d, control_for_run=FALSE) {
                        + party_other
                        + not_caucasian
                        + college_educated
+                       + region_south
+                       + region_midwest
+                       + region_west
                        + covid_sick
                        + covid_hospitalized
                        + covid_died, d)
@@ -597,6 +666,9 @@ run_regression_outcome2_simplified = function(d, control_for_run=FALSE) {
                        + party_other
                        + not_caucasian
                        + college_educated
+                       + region_south
+                       + region_midwest
+                       + region_west
                        + covid_sick 
                        + covid_hospitalized 
                        + covid_died, d)
@@ -611,6 +683,9 @@ run_regression_outcome2_simplified = function(d, control_for_run=FALSE) {
                        + party_other
                        + not_caucasian
                        + college_educated
+                       + region_south
+                       + region_midwest
+                       + region_west
                        + covid_sick 
                        + covid_hospitalized 
                        + covid_died, d)
@@ -639,7 +714,7 @@ mi_spread_combined_run = run_regression_outcome1_simplified(combined, TRUE)
 stargazer(mi_spread_run1$model, mi_spread_run1$model_adv, 
           mi_spread_run2$model_adv, 
           mi_spread_combined_run$model_adv,
-          type="text",  
+          type="text",  out="output/model1_regression.html", report="vcsp*",
           se = list(mi_spread_run1$est$robust_se_all, mi_spread_run1$est_adv$robust_se_all,
                     mi_spread_run2$est_adv$robust_se_all,
                     mi_spread_combined_run$est_adv$robust_se_all),
@@ -659,7 +734,7 @@ mi_spread_combined_run = run_regression_outcome2_simplified(combined, TRUE)
 stargazer(mi_spread_run1$model, mi_spread_run1$model_adv, 
           mi_spread_run2$model_adv, 
           mi_spread_combined_run$model_adv,
-          type="text",  
+          type="html",  out="output/model2_regression.html", report="vcsp*",
           se = list(mi_spread_run1$est$robust_se_all, mi_spread_run1$est_adv$robust_se_all,
                     mi_spread_run2$est_adv$robust_se_all,
                     mi_spread_combined_run$est_adv$robust_se_all),
@@ -668,5 +743,90 @@ stargazer(mi_spread_run1$model, mi_spread_run1$model_adv,
           dep.var.labels.include = FALSE, model.numbers=FALSE,
           column.labels = c("July 21, 2020", "July 21, 2020", "July 25, 2020", "Both dates"),
           align=TRUE)
+```
+
+
+
+
+```{r}
+run_regression_outcome1_hte = function(d) {
+  
+    model_spread_adv = lm(outcome_spread ~ treatment_assignment 
+                       + gender_female
+                       + gender_other
+                       + age_40_60
+                       + age_over_60
+                       + party_democrat
+                       + party_other
+                       + party_other:treatment_assignment
+                       + not_caucasian
+                       + college_educated
+                       + region_south
+                       + region_midwest
+                       + region_west
+                       + covid_sick 
+                       + covid_hospitalized 
+                       + covid_died, d)
+
+  est_spread_adv = get_regression_results_robust_se(model_spread_adv, d, c('treatment_assignment'), FALSE)
+  return ( list('model_adv'=model_spread_adv, 
+                'est_adv'=est_spread_adv))
+}
+
+run_regression_outcome2_hte = function(d) {
+  
+    model_spread_adv = lm(outcome_death ~ treatment_assignment 
+                       + gender_female
+                       + gender_other
+                       + age_40_60
+                       + age_over_60
+                       + party_democrat
+                       + party_other
+                       + party_other:treatment_assignment
+                       + not_caucasian
+                       + college_educated
+                       + region_south
+                       + region_midwest
+                       + region_west
+                       + covid_sick 
+                       + covid_hospitalized 
+                       + covid_died, d)
+
+  est_spread_adv = get_regression_results_robust_se(model_spread_adv, d, c('treatment_assignment'), FALSE)
+  return ( list('model_adv'=model_spread_adv, 
+                'est_adv'=est_spread_adv))
+}
+
 
 ```
+
+```{r}
+
+
+
+
+mi_spread_combined_run = run_regression_outcome1_hte(combined)
+mi_death_combined_run  = run_regression_outcome2_hte(combined)
+
+
+stargazer(mi_spread_combined_run$model_adv, 
+          #type = "text",
+          type="html",  out="output/model_combined_spread_hte_regression.html", report="vcsp*",
+          se = list(mi_spread_combined_run$est_adv$robust_se_all),
+          dep.var.caption  = "Concerned over COVID-19 Spread in U.S. - HTE",
+          dep.var.labels.include = FALSE, model.numbers=FALSE,
+          column.labels = c("Both dates"),
+          align=TRUE)
+
+
+stargazer(mi_death_combined_run$model_adv, 
+          #type = "text",
+          type="html",  out="output/model_combined_death_hte_regression.html", report="vcsp*",
+          se = list(mi_death_combined_run$est_adv$robust_se_all),
+          dep.var.caption  = "Distressed by COVID-19 Spread in U.S. - HTE",
+          dep.var.labels.include = FALSE, model.numbers=FALSE,
+          column.labels = c("Both dates"),
+          align=TRUE)
+```
+
+
