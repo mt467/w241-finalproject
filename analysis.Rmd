@@ -169,6 +169,7 @@ parse_survey_data = function(filename, treatment_only=FALSE) {
   }
   cleaned[, ethnicity := ethnicity_single ]
   
+  
   # counts in control vs treatment
   n_control = nrow(cleaned[treatment == 0, ])
   n_treatment = nrow(cleaned[treatment == 1, ])
@@ -346,16 +347,18 @@ show_box_plot_death= function(df, title) {
 }
 
 meanFunction1 <- function(x){
-return(data.frame(y=round(mean(x),1),label=round(mean(x,na.rm=T),2)))
+return(data.frame(y=round(mean(x),0),label=round(mean(x,na.rm=T),0)))
 }
 show_box_plot_duration= function(df, title) {
   df$treatment_group <- as.factor(df$condition)
-  p = ggplot(df, aes(x=treatment_group, y=duration_of_survey/60, fill=treatment_group)) + geom_boxplot()  +
-    scale_fill_manual(values=c("#a69da0", "#f95b3a")) + labs(title=title, x="Control vs. Treatment", y = "Duration (minutes")  + stat_summary(geom = "errorbar",aes(ymax = ..y.., ymin = ..y..),
-                 width = 1, linetype = "dashed") + stat_summary(fun.data = meanFunction1, geom="text", size = 4, vjust=-.75, hjust=2.5) 
+  p = ggplot(df, aes(x=treatment_group, y=duration_of_survey, fill=treatment_group)) + geom_boxplot()  +
+    scale_fill_manual(values=c("#a69da0", "#f95b3a")) + labs(title=title, x="Control vs. Treatment", y = "Duration (seconds)")  + stat_summary(geom = "errorbar",aes(ymax = ..y.., ymin = ..y..),
+                 width = 1, linetype = "dashed") + stat_summary(fun.data = meanFunction1, geom="text", size = 4, vjust=-.95, hjust=3) 
 
   p + geom_jitter(shape=16, size=2, alpha=.3, position=position_jitter(0.2) )
 }
+
+
 show_box_plot_spread(run1, "Concern over spread of COVID-19 in U.S. - Run 1")
 show_box_plot_spread(run2, "Concern over spread of COVID-19 in U.S. - Run 2")
 show_box_plot_spread(combined, "Concern over spread of COVID-19 in U.S. - Both Runs")
@@ -365,7 +368,15 @@ show_box_plot_death(run1, "Distress over COVID-19 deaths in U.S. - Run 1")
 show_box_plot_death(run2, "Distress over COVID-19 deaths in U.S. - Run 2")
 show_box_plot_death(combined, "Distress over COVID-19 deaths in U.S. - Both runs")
 
-show_box_plot_duration(run1, "Survey Duration")
+show_box_plot_duration(combined, "Survey Duration - Both runs")
+
+
+```
+
+
+```{r}
+cat(combined[treatment == 0, mean(duration_of_survey)], '\n')
+cat(combined[treatment == 1, mean(duration_of_survey)], '\n')
 
 ```
 ## 5. Linear Regression
@@ -829,4 +840,23 @@ stargazer(mi_death_combined_run$model_adv,
           align=TRUE)
 ```
 
+```{r}
+t.test(gender ~ treatment_assignment, data = run2)
+t.test(age ~ treatment_assignment, data = run2)
+t.test(age_under_40  ~ treatment_assignment, data = run2)
+t.test(political_party ~ treatment_assignment, data = run2)
+t.test(ethnicity ~ treatment_assignment, data = run2)
+t.test(state ~ treatment_assignment, data = run2)
+t.test(college_educated ~ treatment_assignment, data = run2)
+t.test(covid_sick ~ treatment_assignment, data = run2)
+t.test(covid_hospitalized ~ treatment_assignment, data = run2)
+t.test(covid_died ~ treatment_assignment, data = run2)
 
+
+```
+```{r}
+t.test(party_republican ~ treatment_assignment, data = run2)
+t.test(party_democrat ~ treatment_assignment, data = run2)
+t.test(party_other ~ treatment_assignment, data = run2)
+
+```
